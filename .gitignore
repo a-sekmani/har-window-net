@@ -1,0 +1,29 @@
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Output data
+data_out/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Data
+har_windownet/skeleton_files/
