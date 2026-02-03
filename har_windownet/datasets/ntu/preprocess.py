@@ -79,7 +79,9 @@ def body_to_coco17_normalized(
     skel = body["skel"]
     nframe = skel.shape[0]
     tracking_state = body.get("tracking_state")
-    color_xy = body.get("color_xy") or body.get("rgb_xy")
+    color_xy = body.get("color_xy")
+    if color_xy is None:
+        color_xy = body.get("rgb_xy")
     depth_xy = body.get("depth_xy")
 
     if projection == PROJECTION_RGB and color_xy is not None:

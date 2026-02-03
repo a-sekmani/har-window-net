@@ -134,6 +134,9 @@ def make_created_at() -> str:
 def ts_end_ms_from_window(window_size: int, fps: float, ts_start_ms: int = 0) -> int:
     """
     Compute ts_end_ms consistently for offline NTU: last frame end time.
-    ts_end_ms = ts_start_ms + (window_size - 1) * (1000 / fps).
+
+    Formula: ts_end_ms = ts_start_ms + floor((window_size - 1) * (1000 / fps)).
+    We use int() (floor) so training and cloud use the same convention; do not mix with round().
+    Example: window_size=30, fps=30, ts_start_ms=0 -> 29*(1000/30)=966.66... -> 966.
     """
     return ts_start_ms + int((window_size - 1) * (1000.0 / fps))

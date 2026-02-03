@@ -44,16 +44,26 @@ Check: `python -c "import har_windownet; print(har_windownet.__version__)"`
 python -m har_windownet.cli.build_dataset --source <path_to_ntu> --out data_out/ntu120_windows [--projection rgb|depth|3d] [--seed 42] [--window-size 30] [--stride 15] [--export-samples 100]
 ```
 
-- `--source`: Path to the NTU folder (files `.skeleton` or `raw_npy/` with `.npy` from [NTU_RGBD120_Parser](https://github.com/FesianXu/NTU_RGBD120_Parser_python)).
+- `--source`: Path to the NTU folder (files `.skeleton` or `.skeleton.npy`). Use a **relative** path (e.g. `har_windownet/skeleton_files`) or **absolute** path (e.g. `/Users/.../skeleton_files`). The builder discovers only `*.skeleton.npy` and `*.skeleton` under this directory.
 - `--out`: Output directory (e.g. `data_out/ntu120_windows`).
 - `--projection`: **rgb** (default when available), **depth**, or **3d**. Use rgb/depth for stable 2D normalization; 3d is unstable across samples.
-- `--export-samples`: Number of windows to export under `samples/` (optional).
+- `--window-size`, `--stride`: Frames per window (default 30) and stride between windows (default = window-size). Use a smaller stride for overlapping windows.
+- `--seed`: Random seed for 80/10/10 split (default 42).
+- `--export-samples`: Number of windows to export under `samples/` as JSON (optional; 0 = skip).
+- `--no-skip-missing`: Do not skip samples from the official NTU missing-skeletons list.
+
+If you see **"No NTU samples found"**, ensure `--source` points to a directory that contains `*.skeleton` or `*.skeleton.npy` files (e.g. `S001C002P003R002A013.skeleton`).
 
 ### Validate outputs
 
 ```bash
 python -m har_windownet.cli.validate_dataset --data data_out/ntu120_windows
 ```
+
+Validation checks:
+
+- Presence of `label_map.json` and `splits/` (train/val/test parquet files).
+- Every row in each split: required fields present, `keypoints` shape **(30, 17, 3)**, no NaN/Inf, x/y/conf in **[0, 1]**, `label` in `label_map`, valid UUIDs for `id` and `session_id`, `label_source` = `"dataset"`.
 
 ---
 
@@ -80,7 +90,7 @@ A window represents: one person (track_id), one camera, a fixed-length segment o
 | camera_id        | str      | e.g. `ntu-cam`                       |
 | session_id       | UUID str | Per video/sample                     |
 | track_id         | int      | Usually 1                            |
-| ts_start_ms, ts_end_ms | int | Start time (e.g. 0 offline); end = (window_size-1)*(1000/fps) |
+| ts_start_ms, ts_end_ms | int | Start time (e.g. 0 offline); end = **floor**((window_size−1)×(1000/fps)) + ts_start_ms — see below |
 | fps              | float    | 30.0 (float for cloud compatibility)                  |
 | window_size      | int      | 30                                   |
 | mean_pose_conf   | float    | Mean keypoint confidence (from tracking_state or default) |
@@ -118,11 +128,13 @@ Do not use a fixed `1.0`. Use Kinect V2 **trackingState** per joint (from `.skel
 
 ### Timestamps (offline NTU)
 
-For offline NTU, timestamps are synthetic but **consistent**:
+For offline NTU, timestamps are synthetic but **consistent**. Use **floor** (integer truncation) so training and cloud agree; do **not** mix with `round()`.
 
-- `ts_start_ms = 0` (or a fixed base)
-- `ts_end_ms = (window_size - 1) * (1000 / fps)`  
-  Helper: `har_windownet.contracts.window.ts_end_ms_from_window(window_size, fps, ts_start_ms)`
+- `ts_start_ms`: 0 for the first window, then `stride × (1000/fps)` per subsequent window.
+- `ts_end_ms = ts_start_ms + floor((window_size - 1) * (1000 / fps))`  
+  Example: window_size=30, fps=30, ts_start_ms=0 → 29×(1000/30)=966.66… → **966** (not 967).
+
+Helper: `har_windownet.contracts.window.ts_end_ms_from_window(window_size, fps, ts_start_ms)`.
 
 ### Mapping (25 → 17)
 
@@ -140,20 +152,86 @@ NTU can have more than one body per frame. Policy is **fixed**:
 
 ## Phase A output layout
 
+After `build_dataset`, the output directory contains:
+
 ```
 data_out/ntu120_windows/
-  label_map.json
-  dataset_meta.json
+  label_map.json          # id_to_name, label_to_id (A001..A120), num_classes
+  dataset_meta.json      # source_dir, projection, window_size, stride, fps, seed, counts
   splits/
     train.parquet
     val.parquet
     test.parquet
-  samples/
-    sample_100_windows.json   # if requested
-  stats/
-    class_counts.json
-    pose_conf_hist.json
+  stats/                  # always written
+    class_counts.json    # window count per label (e.g. "A001": 123)
+    pose_conf_hist.json  # mean_pose_conf: bin_edges, counts (10 bins), min, max, mean
+  samples/                # only if --export-samples N > 0
+    window_00000.json
+    window_00001.json
+    ...
 ```
+
+Parquet files are standard Arrow/Parquet (signature PAR1). Each row is one window with columns matching the Window Contract; `keypoints` is stored as nested list `[30][17][3]`.
+
+---
+
+## Phase B: Training, Evaluation, Export, Inference
+
+Phase B consumes Phase A output only (no window building). It adds training (TCN/GRU), evaluation (accuracy, macro-F1, confusion matrix), ONNX export, and offline inference.
+
+**Dependencies**:
+
+- Base: `pip install -e .` (torch, scikit-learn, matplotlib, etc.).
+- ONNX export: `pip install -e ".[export]"` (installs `onnx`, `onnxscript`). Export uses **opset 18** to avoid version-conversion failures (requesting 14 caused downgrade errors with current PyTorch/ONNX).
+- Inference CLI: requires `onnxruntime`. On **Python 3.14** there may be no wheel — use `pip install onnxruntime` if available, or Python 3.11/3.12 with `pip install -e ".[export,export-inference]"`.
+
+### Train
+
+```bash
+python -m har_windownet.cli.train --data data_out/ntu120_windows --model tcn --batch-size 64 --epochs 50 --lr 1e-3 --out runs/exp01
+```
+
+- `--data` **must** point to a Phase A dataset directory: it must contain `label_map.json` and `splits/train.parquet` (and val/test). If `label_map.json` is missing, you get a clear error: run `build_dataset` with `--out <dir>` first, then use that path as `--data`.
+- Saves `best.ckpt` (by validation macro-F1) and `last.ckpt` under `--out`.
+
+### Eval
+
+```bash
+python -m har_windownet.cli.eval --data data_out/ntu120_windows --checkpoint runs/exp01/best.ckpt --split test
+```
+
+Writes `reports/test_metrics.json` (accuracy, macro-F1, per-class) and optionally `confusion_matrix.png`.
+
+### Export to ONNX
+
+```bash
+python -m har_windownet.cli.export_model --checkpoint runs/exp01/best.ckpt --out runs/exp01/export [--data data_out/ntu120_windows]
+```
+
+- Produces `model.onnx`, `model_meta.json`, and `label_map.json` in `--out`. With the new PyTorch ONNX exporter you may see a warning about `dynamic_axes` vs `dynamic_shapes`; export still completes.
+- The exported model uses **ONNX opset 18**. Using 14 triggered a failed downgrade (axes adapter) in the ONNX version converter; we use 18 so no conversion is needed and `onnxruntime` can run the model.
+
+### Offline inference on Window JSON
+
+After exporting the model, run inference (requires `onnxruntime`):
+
+```bash
+python -m har_windownet.export.inference_onnx --model runs/exp01/export/model.onnx --window data_out/ntu120_windows/samples/window_00000.json
+```
+
+Pass a **single-window** JSON file (e.g. one of the files under `samples/`). Returns `pred_label`, `pred_label_id`, and optionally `probs`.
+
+---
+
+## Troubleshooting
+
+| Issue | What to do |
+|-------|-------------|
+| **No NTU samples found** | `--source` must be a directory containing `*.skeleton` or `*.skeleton.npy`. Use a correct relative path (e.g. `har_windownet/skeleton_files`) or absolute path. |
+| **label_map.json not found** (when training) | `--data` must be a Phase A output directory. Run `build_dataset --out <dir>` first, then use that directory as `--data`. |
+| **ONNX export: version conversion error** | The project uses **opset 18**; do not lower it to 14 or the ONNX C API converter can fail. Re-export with the default (no change needed in code). |
+| **ModuleNotFoundError: onnxruntime** | Install with `pip install onnxruntime` if a wheel exists for your Python version. On Python 3.14 there may be none; use Python 3.11/3.12 for the inference CLI. |
+| **ModuleNotFoundError: onnxscript** | Required for `torch.onnx.export`. Install with `pip install -e ".[export]"`. |
 
 ---
 
@@ -213,8 +291,14 @@ pytest --cov=har_windownet --cov-report=term-missing
 - **NTU reader**
   - `sample_id_from_path`: extraction from `.skeleton` and `.skeleton.npy` paths.
   - `load_missing_skeletons_set`, `is_missing_sample`: missing-skeletons list is loaded and used.
-  - `read_ntu_npy`: dict with `skel_body0`; invalid/missing keys raise.
+  - `read_ntu_npy`, `read_ntu_npy_full`, `read_ntu_skeleton_txt_full`: dict with skel/rgb_xy/depth_xy/tracking_state; invalid/missing keys raise.
   - `read_ntu_sample`: format auto-detection (.npy vs .skeleton).
   - `list_ntu_samples`: discovers files, skips missing-skeleton samples when requested.
+  - `select_dominant_body`: most_tracked / closest_z policies.
+- **NTU windowing**
+  - `slice_windows`: exact/overlapping windows, short-sequence padding (repeat last frame), invalid shape/stride raise.
+- **NTU builder**
+  - `action_label_from_sample_id`: extraction of A001..A120 from sample ID.
+  - `build_dataset`: raises when no NTU samples found under source.
 
-Additional test cases (edge shapes, boundary values, invalid UUIDs, etc.) are added where applicable and documented in the test modules.
+Additional test cases (edge shapes, boundary values, invalid UUIDs, etc.) are in the test modules.
