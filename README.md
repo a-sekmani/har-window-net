@@ -236,6 +236,47 @@ Phase B consumes Phase A output only (no window building). It adds training (TCN
 - ONNX export: `pip install -e ".[export]"` (installs `onnx`, `onnxscript`). Export uses **opset 18** to avoid version-conversion failures (requesting 14 caused downgrade errors with current PyTorch/ONNX).
 - Inference CLI: requires `onnxruntime`. On **Python 3.14** there may be no wheel — use `pip install onnxruntime` if available, or Python 3.11/3.12 with `pip install -e ".[export,export-inference]"`.
 
+### Training steps (end-to-end)
+
+Run these in order from the project root (with `.venv` activated):
+
+1. **Build dataset** (Phase A). Example for Custom10:
+   ```bash
+   python -m har_windownet.cli.build_dataset \
+     --dataset custom10 --source datasets --out data_out/custom10 \
+     --projection rgb --window-size 30 --stride 30
+   ```
+   For NTU, use `--dataset ntu --source <path_to_ntu> --out data_out/ntu120_windows`.
+
+2. **Validate** (optional): `python -m har_windownet.cli.validate_dataset --data data_out/custom10`
+
+3. **Train**: saves `best.ckpt` and `last.ckpt` under `--out`.
+   ```bash
+   python -m har_windownet.cli.train \
+     --data data_out/custom10 --model tcn --batch-size 64 --epochs 30 --lr 1e-3 \
+     --out runs/custom10_tcn_v1
+   ```
+
+4. **Eval**: writes `reports/<split>_metrics.json`, `confusion_matrix.png`, and `class_map.csv`.
+   ```bash
+   python -m har_windownet.cli.eval \
+     --data data_out/custom10 --checkpoint runs/custom10_tcn_v1/best.ckpt --split test
+   ```
+
+5. **Export to ONNX** (optional): for deployment.
+   ```bash
+   python -m har_windownet.cli.export_model \
+     --checkpoint runs/custom10_tcn_v1/best.ckpt --out runs/custom10_tcn_v1/export \
+     --data data_out/custom10
+   ```
+
+6. **Inference** (optional): run the exported model on a single-window JSON.
+   ```bash
+   python -m har_windownet.export.inference_onnx \
+     --model runs/custom10_tcn_v1/export/model.onnx \
+     --window data_out/custom10/samples/window_00000.json
+   ```
+
 ### Train
 
 ```bash

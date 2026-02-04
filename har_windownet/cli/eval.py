@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 from pathlib import Path
 
 import torch
 
+from har_windownet.contracts.labels import load_label_map
 from har_windownet.training.datasets import WindowDataset
 from har_windownet.training.metrics import (
     accuracy,
@@ -16,6 +18,23 @@ from har_windownet.training.metrics import (
     per_class_precision_recall,
 )
 from har_windownet.training.models import get_model
+
+
+def _class_names_from_label_map(label_map: dict, num_classes: int) -> list[str]:
+    """Build display names for axes: id_to_label (e.g. A001) or 'id_label' when id_to_name exists."""
+    id_to_name = label_map.get("id_to_name") or {}
+    label_to_id = label_map.get("label_to_id") or {}
+    id_to_label = {str(v): k for k, v in label_to_id.items()}
+    names = []
+    for i in range(num_classes):
+        sid = str(i)
+        label_part = id_to_label.get(sid, sid)
+        name_part = id_to_name.get(sid, "")
+        if name_part:
+            names.append(f"{label_part}_{name_part}")
+        else:
+            names.append(label_part)
+    return names
 
 
 def main() -> None:
@@ -28,6 +47,7 @@ def main() -> None:
     p.add_argument("--device", default=None)
     args = p.parse_args()
 
+    data_dir = Path(args.data)
     ckpt_path = Path(args.checkpoint)
     if args.out is None:
         out_dir = ckpt_path.parent / "reports"
@@ -35,9 +55,16 @@ def main() -> None:
         out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    label_map = load_label_map(data_dir / "label_map.json")
+    num_classes = label_map["num_classes"]
+    class_names = _class_names_from_label_map(label_map, num_classes)
+
     device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
     ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
-    num_classes = ckpt["num_classes"]
+    if ckpt.get("num_classes") != num_classes:
+        raise ValueError(
+            f"Checkpoint num_classes ({ckpt.get('num_classes')}) != dataset num_classes ({num_classes})"
+        )
     model_name = ckpt["model_name"]
 
     model = get_model(model_name, num_classes=num_classes)
@@ -80,16 +107,31 @@ def main() -> None:
     print(f"Accuracy: {acc:.4f}  Macro-F1: {f1:.4f}")
     print(f"Metrics saved to {metrics_path}")
 
+    # Class map: print to terminal and write CSV
+    print("\nClass map:")
+    for i in range(num_classes):
+        print(f"  {i} -> {class_names[i]}")
+    class_map_csv = out_dir / "class_map.csv"
+    with open(class_map_csv, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["class_id", "label"])
+        for i in range(num_classes):
+            w.writerow([i, class_names[i]])
+    print(f"Class map saved to {class_map_csv}")
+
     try:
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
-        plt.figure(figsize=(10, 8))
+        plt.figure(figsize=(max(8, num_classes * 0.5), max(6, num_classes * 0.4)))
         plt.imshow(cm, interpolation="nearest", cmap="Blues")
         plt.colorbar()
         plt.title(f"Confusion matrix ({args.split})")
         plt.ylabel("True")
         plt.xlabel("Predicted")
+        plt.xticks(range(num_classes), class_names, rotation=90)
+        plt.yticks(range(num_classes), class_names)
+        plt.tight_layout()
         plt.savefig(out_dir / "confusion_matrix.png", dpi=100, bbox_inches="tight")
         plt.close()
         print(f"Confusion matrix saved to {out_dir / 'confusion_matrix.png'}")
