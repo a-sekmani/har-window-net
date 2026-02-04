@@ -54,11 +54,32 @@ python -m har_windownet.cli.build_dataset --source <path_to_ntu> --out data_out/
 
 If you see **"No NTU samples found"**, ensure `--source` points to a directory that contains `*.skeleton` or `*.skeleton.npy` files (e.g. `S001C002P003R002A013.skeleton`).
 
+### Build dataset from Custom10
+
+For a custom dataset (one folder per activity, each containing clip files):
+
+```bash
+python -m har_windownet.cli.build_dataset \
+  --dataset custom10 \
+  --source <path_to_root_folder> \
+  --out data_out/custom10 \
+  [--projection rgb|depth|3d] [--window-size 30] [--stride 30] [--fps 30] [--img-w 1920] [--img-h 1080] [--export-samples 20]
+```
+
+- **`--source`** must be the **directory that contains** the label subfolders (e.g. if you have `datasets/A001_WALKING/`, `datasets/A002_SITTING/`, then `--source datasets` from project root). This path is **not** inside the library; it is your own data folder (any name: `datasets`, `my_data`, etc.).
+- Each **subfolder** name must match **`A001_*`**, **`001_*`**, or **`A1_*`** / **`A43_*`** (1–3 digits, zero-padded to A001, A043, etc.). Inside each subfolder put **`.json`**, **`.npy`**, or **`.skeleton`** (NTU text) clip files (one file = one clip).
+- **`.skeleton`** (NTU text format): read like the NTU adapter; use **`--projection rgb`** (default), **`depth`**, or **`3d`** for 2D normalization. RGB/depth use Kinect dimensions (1920×1080 / 512×424); tracking state → confidence (2→1.0, 1→0.5, 0→0.0). Keypoints are sanitized (NaN/Inf replaced and clipped to [0,1]) so validation and training always see valid values.
+- **JSON/NPY** clips must include a **`keypoints`** array shape `[T][K][3]` with K=17 or 25; optional `fps`, `format` (`coco17_norm` or `coco17_pixel`), `img_w`, `img_h`.
+
+If you see **"No Custom10 clips found"**, the error message will list the subfolders found and why they were skipped (name not matched, or no .json/.npy/.skeleton inside). See **Expected Custom10 source layout** below.
+
 ### Validate outputs
 
 ```bash
 python -m har_windownet.cli.validate_dataset --data data_out/ntu120_windows
 ```
+
+The same command works for Custom10 output: `--data data_out/custom10`.
 
 Validation checks:
 
@@ -76,6 +97,36 @@ Validation checks:
   - `nbodys`, `njoints`, etc.
 
 Samples listed in [NTU_RGBD120_samples_with_missing_skeletons](https://github.com/shahroudy/NTURGB-D/blob/master/Matlab/NTU_RGBD120_samples_with_missing_skeletons.txt) are excluded automatically.
+
+---
+
+## Expected Custom10 source layout
+
+The **`--source`** path is the **root folder** that **contains** one subfolder per activity (label). The library does **not** read from `har_windownet/datasets/`; you use your own folder (e.g. `datasets/` at project root).
+
+**Required structure:**
+
+```
+<--source>/
+├── A001_WALKING/
+│   ├── clip1.json
+│   └── clip2.npy
+├── A002_SITTING/
+│   └── video_01.json
+├── 001_JUMPING/          # 001_* is also accepted (normalized to A001)
+└── A010_OTHER/
+    └── sample.json
+```
+
+- **Subfolder name:** `A001_*`, `001_*`, or `A1_*` / `A43_*` (optional `A` + 1–3 digits + `_` + rest; normalized to A001, A002, …). Examples: `A001_WALKING`, `A1_drink_water`, `A43_falling_down`.
+- **Inside each subfolder:** **`.json`**, **`.npy`**, and **`.skeleton`** (NTU text) files are read; each file = one clip. For **`.skeleton`**, use `--projection rgb|depth|3d` as for NTU.
+- **JSON format:** must contain `"keypoints"`: array of shape `[T][K][3]` with **K = 17** (COCO-17) or **25** (NTU, mapped to 17). Optional: `"fps"`, `"format"` (`coco17_norm` or `coco17_pixel`), `"img_w"`, `"img_h"` (required if format is pixel).
+
+**Why "No Custom10 clips found" often happens:**
+
+1. **Path wrong:** `--source datasets` resolves relative to the current working directory. If you run from project root and the folder is `./datasets`, it must exist and contain the subfolders. Use an absolute path if unsure.
+2. **Subfolder names:** Names like `walking` or `action_1` do **not** match. You need **`A` + 1–3 digits + `_` + name** (e.g. `A001_WALKING`, `A1_drink_water`, `A43_falling_down`).
+3. **No clips inside:** Matched subfolders must contain at least one `.json`, `.npy`, or `.skeleton` file.
 
 ---
 
@@ -152,7 +203,7 @@ NTU can have more than one body per frame. Policy is **fixed**:
 
 ## Phase A output layout
 
-After `build_dataset`, the output directory contains:
+After `build_dataset` (NTU or Custom10), the output directory has the same structure:
 
 ```
 data_out/ntu120_windows/
@@ -300,5 +351,7 @@ pytest --cov=har_windownet --cov-report=term-missing
 - **NTU builder**
   - `action_label_from_sample_id`: extraction of A001..A120 from sample ID.
   - `build_dataset`: raises when no NTU samples found under source.
+- **Custom10 adapter**
+  - Label parsing from folder names (A001_*, A1_*, A43_*), clip discovery (.json, .npy, .skeleton), read_clip and skeleton path (NTU reader + body_to_coco17_normalized), windowing, build_dataset_custom10 with 80/10/10 split; window contract validation for JSON and .skeleton clips.
 
 Additional test cases (edge shapes, boundary values, invalid UUIDs, etc.) are in the test modules.

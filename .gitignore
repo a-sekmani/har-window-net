@@ -26,4 +26,4 @@ data_out/
 *.swo
 
 # Data
-har_windownet/skeleton_files/
+datasets/
