@@ -250,11 +250,11 @@ Run these in order from the project root (with `.venv` activated):
 
 2. **Validate** (optional): `python -m har_windownet.cli.validate_dataset --data data_out/custom10`
 
-3. **Train**: saves `best.ckpt` and `last.ckpt` under `--out`.
+3. **Train**: saves `best.ckpt` and `last.ckpt` under `--out`. Use `--seed` for reproducible runs (e.g. multiple seeds for reporting).
    ```bash
    python -m har_windownet.cli.train \
      --data data_out/custom10 --model tcn --batch-size 64 --epochs 30 --lr 1e-3 \
-     --out runs/custom10_tcn_v1
+     --seed 42 --out runs/custom10_tcn_v1
    ```
 
 4. **Eval**: writes `reports/<split>_metrics.json`, `confusion_matrix.png`, and `class_map.csv`.
@@ -280,10 +280,11 @@ Run these in order from the project root (with `.venv` activated):
 ### Train
 
 ```bash
-python -m har_windownet.cli.train --data data_out/ntu120_windows --model tcn --batch-size 64 --epochs 50 --lr 1e-3 --out runs/exp01
+python -m har_windownet.cli.train --data data_out/ntu120_windows --model tcn --batch-size 64 --epochs 50 --lr 1e-3 --seed 42 --out runs/exp01
 ```
 
 - `--data` **must** point to a Phase A dataset directory: it must contain `label_map.json` and `splits/train.parquet` (and val/test). If `label_map.json` is missing, you get a clear error: run `build_dataset` with `--out <dir>` first, then use that path as `--data`.
+- `--seed` (default 42): random seed for PyTorch and the train DataLoader shuffle, for reproducible training. Use different seeds (e.g. 42, 7, 123) when reporting mean±std across runs.
 - Saves `best.ckpt` (by validation macro-F1) and `last.ckpt` under `--out`.
 
 ### Eval

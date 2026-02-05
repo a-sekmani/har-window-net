@@ -15,6 +15,7 @@ def main() -> None:
     p.add_argument("--batch-size", type=int, default=64)
     p.add_argument("--epochs", type=int, default=50)
     p.add_argument("--lr", type=float, default=1e-3)
+    p.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
     p.add_argument("--device", default=None, help="cuda or cpu")
     args = p.parse_args()
     run_training(
@@ -24,6 +25,7 @@ def main() -> None:
         batch_size=args.batch_size,
         epochs=args.epochs,
         lr=args.lr,
+        seed=args.seed,
         device=args.device,
     )
 

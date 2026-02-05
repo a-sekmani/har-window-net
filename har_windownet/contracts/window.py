@@ -86,12 +86,17 @@ class WindowContract(BaseModel):
         return cls.model_validate(obj)
 
 
-def validate_window_dict(data: dict[str, Any]) -> list[str]:
+def validate_window_dict(
+    data: dict[str, Any],
+    window_size: int | None = None,
+) -> list[str]:
     """
     Validate a window dict (e.g. from Parquet row) without building full Pydantic model.
     Returns list of error messages; empty if valid.
     fps may be int or float (cloud uses float). source_body_id is optional.
+    window_size: if given, keypoints must have shape (window_size, 17, 3); else use WINDOW_SIZE (30).
     """
+    T = window_size if window_size is not None else WINDOW_SIZE
     errors: list[str] = []
     required = {
         "id", "device_id", "camera_id", "session_id", "track_id",
@@ -107,8 +112,8 @@ def validate_window_dict(data: dict[str, Any]) -> list[str]:
     if kp is not None:
         try:
             arr = np.array(kp)
-            if arr.shape != (WINDOW_SIZE, NUM_KEYPOINTS, KEYPOINT_DIM):
-                errors.append(f"keypoints shape must be (30, 17, 3), got {arr.shape}")
+            if arr.shape != (T, NUM_KEYPOINTS, KEYPOINT_DIM):
+                errors.append(f"keypoints shape must be ({T}, 17, 3), got {arr.shape}")
             elif not np.isfinite(arr).all():
                 errors.append("keypoints contain NaN or Inf")
             elif arr.min() < 0.0 or arr.max() > 1.0:

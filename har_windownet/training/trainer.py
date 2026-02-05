@@ -73,6 +73,7 @@ def run_training(
     batch_size: int = 64,
     epochs: int = 50,
     lr: float = 1e-3,
+    seed: int = 42,
     device: str | None = None,
 ) -> None:
     out_dir = Path(out_dir)
@@ -81,12 +82,23 @@ def run_training(
         device = "cuda" if torch.cuda.is_available() else "cpu"
     dev = torch.device(device)
 
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    g = torch.Generator()
+    g.manual_seed(seed)
+
     train_ds = WindowDataset(data_root, "train")
     val_ds = WindowDataset(data_root, "val")
     num_classes = train_ds.num_classes
 
     train_loader = DataLoader(
-        train_ds, batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=False
+        train_ds,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=0,
+        pin_memory=False,
+        generator=g,
     )
     val_loader = DataLoader(
         val_ds, batch_size=batch_size, shuffle=False, num_workers=0
