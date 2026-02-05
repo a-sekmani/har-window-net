@@ -12,8 +12,9 @@ import torch
 
 from har_windownet.contracts.labels import load_label_map
 from har_windownet.contracts.window import KEYPOINT_DIM, NUM_KEYPOINTS, WINDOW_SIZE
+from har_windownet.features.transforms import build_feature_pipeline, get_input_features
 
-# F = K * C = 17 * 3 = 51
+# F = K * C = 17 * 3 = 51 (baseline raw)
 INPUT_FEATURES = NUM_KEYPOINTS * KEYPOINT_DIM
 
 
@@ -34,8 +35,9 @@ class WindowDataset(torch.utils.data.Dataset):
     """
     Load windows from Phase A Parquet; return x (T, F) float32, y (int) label_id.
 
-    Flatten keypoints to (T, F): frame-major, each frame 17 keypoints x (x,y,conf).
-    T (window_size) is read from dataset_meta.json so datasets built with --window-size 60 work.
+    Flatten keypoints to (T, F): frame-major. When feature_config is None (baseline),
+    F=51 (17*3). When feature_config is set, F comes from get_input_features(feature_config).
+    T (window_size) is read from dataset_meta.json.
     """
 
     def __init__(
@@ -43,6 +45,7 @@ class WindowDataset(torch.utils.data.Dataset):
         data_root: str | Path,
         split: str,
         label_map_path: str | Path | None = None,
+        feature_config: dict[str, Any] | None = None,
     ) -> None:
         self.data_root = Path(data_root)
         self.split = split
@@ -56,6 +59,12 @@ class WindowDataset(torch.utils.data.Dataset):
         self.num_classes = self.label_map["num_classes"]
         self.label_to_id = self.label_map["label_to_id"]
         self.window_size = _load_dataset_window_size(self.data_root)
+        self.feature_config = feature_config
+        if feature_config is not None:
+            self._feature_transform, self._input_features = build_feature_pipeline(feature_config)
+        else:
+            self._feature_transform = None
+            self._input_features = INPUT_FEATURES
 
         parquet_path = self.data_root / "splits" / f"{split}.parquet"
         if not parquet_path.exists():
@@ -63,16 +72,20 @@ class WindowDataset(torch.utils.data.Dataset):
         self.table = pq.read_table(parquet_path)
         self._length = len(self.table)
 
+    @property
+    def input_features(self) -> int:
+        """Number of input features F (for model construction)."""
+        return self._input_features
+
     def __len__(self) -> int:
         return self._length
 
     def _keypoints_to_tensor(self, keypoints: Any) -> torch.Tensor:
-        """Convert keypoints (list or array) to (T, F) float32."""
+        """Convert keypoints (list or array) to (T, F) float32 (raw baseline)."""
         arr = np.array(keypoints, dtype=np.float32)
         expected = (self.window_size, NUM_KEYPOINTS, KEYPOINT_DIM)
         if arr.shape != expected:
             raise ValueError(f"Expected keypoints {expected}, got {arr.shape}")
-        # Flatten: (T, K, C) -> (T, K*C)
         arr = arr.reshape(self.window_size, INPUT_FEATURES)
         return torch.from_numpy(arr)
 
@@ -84,5 +97,13 @@ class WindowDataset(torch.utils.data.Dataset):
         if hasattr(label_str, "as_py"):
             label_str = label_str.as_py()
         label_id = self.label_to_id[str(label_str)]
+
+        if self._feature_transform is not None:
+            arr = np.array(kp, dtype=np.float32)
+            if arr.shape != (self.window_size, NUM_KEYPOINTS, KEYPOINT_DIM):
+                raise ValueError(f"Expected keypoints ({self.window_size}, 17, 3), got {arr.shape}")
+            features = self._feature_transform(arr)
+            return torch.from_numpy(features.astype(np.float32)), label_id
+
         x = self._keypoints_to_tensor(kp)
         return x, label_id

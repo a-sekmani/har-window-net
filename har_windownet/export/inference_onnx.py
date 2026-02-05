@@ -4,22 +4,22 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 
 from har_windownet.contracts.window import NUM_KEYPOINTS, WINDOW_SIZE
 
 KEYPOINT_DIM = 3
-INPUT_FEATURES = NUM_KEYPOINTS * KEYPOINT_DIM
+INPUT_FEATURES_RAW = NUM_KEYPOINTS * KEYPOINT_DIM
 
 
-def window_to_input(keypoints: Any) -> np.ndarray:
-    """Convert keypoints (list or array) to (1, T, F) float32."""
+def window_to_input_raw(keypoints: Any) -> np.ndarray:
+    """Convert raw keypoints (list or array) to (1, T, 51) float32."""
     arr = np.array(keypoints, dtype=np.float32)
     if arr.shape != (WINDOW_SIZE, NUM_KEYPOINTS, KEYPOINT_DIM):
-        raise ValueError(f"Expected keypoints (30, 17, 3), got {arr.shape}")
-    arr = arr.reshape(1, WINDOW_SIZE, INPUT_FEATURES)
+        raise ValueError(f"Expected keypoints ({WINDOW_SIZE}, {NUM_KEYPOINTS}, {KEYPOINT_DIM}), got {arr.shape}")
+    arr = arr.reshape(1, WINDOW_SIZE, INPUT_FEATURES_RAW)
     return arr
 
 
@@ -41,11 +41,26 @@ class ONNXInference:
             str(self.model_path),
             providers=["CPUExecutionProvider"],
         )
-        with open(self.export_dir / "model_meta.json") as f:
+        with open(self.export_dir / "model_meta.json", encoding="utf-8") as f:
             self.meta = json.load(f)
-        with open(self.export_dir / "label_map.json") as f:
+        with open(self.export_dir / "label_map.json", encoding="utf-8") as f:
             self.label_map = json.load(f)
         self.id_to_name = self.label_map["id_to_name"]
+        self._feature_transform: Callable[[np.ndarray], np.ndarray] | None = None
+        feature_spec = self.meta.get("feature_spec")
+        if feature_spec is not None:
+            from har_windownet.features.transforms import build_feature_pipeline
+            self._feature_transform, _ = build_feature_pipeline(feature_spec)
+
+    def _window_to_input(self, keypoints: Any) -> np.ndarray:
+        """Convert window keypoints to (1, T, F) float32, applying feature_spec if present."""
+        kp = np.array(keypoints, dtype=np.float32)
+        if kp.shape != (WINDOW_SIZE, NUM_KEYPOINTS, KEYPOINT_DIM):
+            raise ValueError(f"Expected keypoints ({WINDOW_SIZE}, {NUM_KEYPOINTS}, {KEYPOINT_DIM}), got {kp.shape}")
+        if self._feature_transform is not None:
+            feats = self._feature_transform(kp)
+            return feats.astype(np.float32).reshape(1, WINDOW_SIZE, -1)
+        return window_to_input_raw(keypoints)
 
     def predict(
         self, window: dict[str, Any], return_probs: bool = True
@@ -54,7 +69,7 @@ class ONNXInference:
         Run inference on one Window dict. Returns pred_label, pred_label_id, and optionally probs.
         """
         keypoints = window["keypoints"]
-        x = window_to_input(keypoints)
+        x = self._window_to_input(keypoints)
         input_name = self.session.get_inputs()[0].name
         logits = self.session.run(None, {input_name: x})[0][0]
         pred_id = int(np.argmax(logits))

@@ -75,6 +75,7 @@ def run_training(
     lr: float = 1e-3,
     seed: int = 42,
     device: str | None = None,
+    feature_config: dict | None = None,
 ) -> None:
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -88,9 +89,10 @@ def run_training(
     g = torch.Generator()
     g.manual_seed(seed)
 
-    train_ds = WindowDataset(data_root, "train")
-    val_ds = WindowDataset(data_root, "val")
+    train_ds = WindowDataset(data_root, "train", feature_config=feature_config)
+    val_ds = WindowDataset(data_root, "val", feature_config=feature_config)
     num_classes = train_ds.num_classes
+    input_features = train_ds.input_features
 
     train_loader = DataLoader(
         train_ds,
@@ -104,7 +106,9 @@ def run_training(
         val_ds, batch_size=batch_size, shuffle=False, num_workers=0
     )
 
-    model = get_model(model_name, num_classes=num_classes).to(dev)
+    model = get_model(
+        model_name, num_classes=num_classes, input_features=input_features
+    ).to(dev)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     criterion = nn.CrossEntropyLoss()
 
@@ -118,27 +122,17 @@ def run_training(
             f"Epoch {epoch}  train_loss={train_loss:.4f}  val_loss={val_loss:.4f}  "
             f"val_acc={val_acc:.4f}  val_macro_f1={val_f1:.4f}"
         )
+        ckpt_payload = {
+            "epoch": epoch,
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "val_macro_f1": val_f1,
+            "num_classes": num_classes,
+            "model_name": model_name,
+            "input_features": input_features,
+            "feature_config": feature_config,
+        }
         if val_f1 > best_f1:
             best_f1 = val_f1
-            torch.save(
-                {
-                    "epoch": epoch,
-                    "model_state_dict": model.state_dict(),
-                    "optimizer_state_dict": optimizer.state_dict(),
-                    "val_macro_f1": val_f1,
-                    "num_classes": num_classes,
-                    "model_name": model_name,
-                },
-                out_dir / "best.ckpt",
-            )
-        torch.save(
-            {
-                "epoch": epoch,
-                "model_state_dict": model.state_dict(),
-                "optimizer_state_dict": optimizer.state_dict(),
-                "val_macro_f1": val_f1,
-                "num_classes": num_classes,
-                "model_name": model_name,
-            },
-            out_dir / "last.ckpt",
-        )
+            torch.save(ckpt_payload, out_dir / "best.ckpt")
+        torch.save(ckpt_payload, out_dir / "last.ckpt")

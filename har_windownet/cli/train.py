@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+from pathlib import Path
 
 from har_windownet.training.trainer import run_training
 
@@ -17,7 +19,46 @@ def main() -> None:
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
     p.add_argument("--device", default=None, help="cuda or cpu")
+    p.add_argument(
+        "--features",
+        default="raw",
+        choices=["raw", "norm", "vel", "angles", "combo"],
+        help="Input feature set",
+    )
+    p.add_argument(
+        "--conf-mode",
+        default="keep",
+        choices=["keep", "drop"],
+        help="Confidence: keep (x,y,conf) or drop (x,y only)",
+    )
+    p.add_argument("--norm-center", default="auto", help="Normalize center (e.g. auto, midhip)")
+    p.add_argument("--norm-scale", default="auto", help="Normalize scale (e.g. auto, fixed)")
     args = p.parse_args()
+
+    feature_config = {
+        "features": args.features,
+        "conf_mode": args.conf_mode,
+        "norm_center": args.norm_center,
+        "norm_scale": args.norm_scale,
+    }
+
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    config_path = out_dir / "config.json"
+    run_config = {
+        "data": args.data,
+        "out": str(out_dir),
+        "model": args.model,
+        "batch_size": args.batch_size,
+        "epochs": args.epochs,
+        "lr": args.lr,
+        "seed": args.seed,
+        "device": args.device,
+        "feature_config": feature_config,
+    }
+    with open(config_path, "w", encoding="utf-8") as f:
+        json.dump(run_config, f, indent=2)
+
     run_training(
         data_root=args.data,
         out_dir=args.out,
@@ -27,6 +68,7 @@ def main() -> None:
         lr=args.lr,
         seed=args.seed,
         device=args.device,
+        feature_config=feature_config,
     )
 
 

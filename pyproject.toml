@@ -39,6 +39,7 @@ har-windownet-validate-dataset = "har_windownet.cli.validate_dataset:main"
 har-windownet-train = "har_windownet.cli.train:main"
 har-windownet-eval = "har_windownet.cli.eval:main"
 har-windownet-export-model = "har_windownet.cli.export_model:main"
+har-windownet-compare-runs = "har_windownet.cli.compare_runs:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

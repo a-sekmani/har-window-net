@@ -47,10 +47,27 @@ def main() -> None:
     p.add_argument("--device", default=None)
     args = p.parse_args()
 
-    data_dir = Path(args.data)
     ckpt_path = Path(args.checkpoint)
+    run_dir = ckpt_path.parent
+    config_path = run_dir / "config.json"
+    if config_path.exists():
+        with open(config_path, encoding="utf-8") as f:
+            run_config = json.load(f)
+        feature_config = run_config.get("feature_config")
+        data_from_config = run_config.get("data")
+    else:
+        run_config = None
+        feature_config = None
+        data_from_config = None
+
+    data_dir = Path(args.data) if args.data else (Path(data_from_config) if data_from_config else None)
+    if data_dir is None or not data_dir.exists():
+        raise SystemExit(
+            "Missing --data. Either pass --data <path> or use a checkpoint from a run that has config.json with 'data'."
+        )
+
     if args.out is None:
-        out_dir = ckpt_path.parent / "reports"
+        out_dir = run_dir / "reports"
     else:
         out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -66,13 +83,16 @@ def main() -> None:
             f"Checkpoint num_classes ({ckpt.get('num_classes')}) != dataset num_classes ({num_classes})"
         )
     model_name = ckpt["model_name"]
+    input_features = ckpt.get("input_features", 51)
+    if feature_config is None:
+        feature_config = ckpt.get("feature_config")
 
-    model = get_model(model_name, num_classes=num_classes)
+    model = get_model(model_name, num_classes=num_classes, input_features=input_features)
     model.load_state_dict(ckpt["model_state_dict"])
     model = model.to(device)
     model.eval()
 
-    ds = WindowDataset(args.data, args.split)
+    ds = WindowDataset(data_dir, args.split, feature_config=feature_config)
     loader = torch.utils.data.DataLoader(ds, batch_size=args.batch_size, shuffle=False)
 
     all_preds: list[int] = []
@@ -102,10 +122,25 @@ def main() -> None:
         "per_class": per_class,
     }
     metrics_path = out_dir / f"{args.split}_metrics.json"
-    with open(metrics_path, "w") as f:
+    with open(metrics_path, "w", encoding="utf-8") as f:
         json.dump(metrics, f, indent=2)
     print(f"Accuracy: {acc:.4f}  Macro-F1: {f1:.4f}")
     print(f"Metrics saved to {metrics_path}")
+
+    per_class_csv = out_dir / "per_class.csv"
+    with open(per_class_csv, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["class_id", "label", "precision", "recall", "f1", "support"])
+        for i in range(num_classes):
+            w.writerow([
+                i,
+                class_names[i],
+                per_class["precision"][i],
+                per_class["recall"][i],
+                per_class["f1"][i],
+                per_class["support"][i],
+            ])
+    print(f"Per-class metrics saved to {per_class_csv}")
 
     # Class map: print to terminal and write CSV
     print("\nClass map:")

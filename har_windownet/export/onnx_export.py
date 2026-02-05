@@ -11,8 +11,8 @@ import torch
 from har_windownet.contracts.window import NUM_KEYPOINTS, WINDOW_SIZE
 from har_windownet.training.models import get_model
 
-# F = 17 * 3 = 51
-INPUT_FEATURES = NUM_KEYPOINTS * 3
+# Baseline F = 17 * 3 = 51
+INPUT_FEATURES_DEFAULT = NUM_KEYPOINTS * 3
 
 
 def export_to_onnx(
@@ -23,6 +23,7 @@ def export_to_onnx(
     """
     Load checkpoint, export model to ONNX, write model_meta.json and label_map.json.
 
+    Uses input_features and feature_config from checkpoint when present (Phase C).
     If label_map_path is None, uses build_default_label_map from contracts.labels.
     """
     from har_windownet.contracts.labels import build_default_label_map, load_label_map, save_label_map
@@ -33,12 +34,14 @@ def export_to_onnx(
     ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     num_classes = ckpt["num_classes"]
     model_name = ckpt["model_name"]
+    input_features = ckpt.get("input_features", INPUT_FEATURES_DEFAULT)
+    feature_config = ckpt.get("feature_config")
 
-    model = get_model(model_name, num_classes=num_classes)
+    model = get_model(model_name, num_classes=num_classes, input_features=input_features)
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()
 
-    dummy = torch.zeros(1, WINDOW_SIZE, INPUT_FEATURES)
+    dummy = torch.zeros(1, WINDOW_SIZE, input_features)
     onnx_path = out_dir / "model.onnx"
     # Use opset 18 to match current torch.onnx exporter; 14 triggers failed downgrade (axes adapter).
     torch.onnx.export(
@@ -52,15 +55,18 @@ def export_to_onnx(
     )
 
     meta = {
-        "input_shape": [1, WINDOW_SIZE, INPUT_FEATURES],
+        "input_shape": [1, WINDOW_SIZE, input_features],
         "window_size": WINDOW_SIZE,
+        "input_features": input_features,
         "fps": 30.0,
         "keypoint_order": "coco17",
         "features": ["x", "y", "conf"],
         "training_dataset": "ntu120",
         "num_classes": num_classes,
     }
-    with open(out_dir / "model_meta.json", "w") as f:
+    if feature_config is not None:
+        meta["feature_spec"] = feature_config
+    with open(out_dir / "model_meta.json", "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2)
 
     if label_map_path and Path(label_map_path).exists():
