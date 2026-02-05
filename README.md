@@ -228,13 +228,24 @@ Parquet files are standard Arrow/Parquet (signature PAR1). Each row is one windo
 
 ## Phase B: Training, Evaluation, Export, Inference
 
-Phase B consumes Phase A output only (no window building). It adds training (TCN/GRU), evaluation (accuracy, macro-F1, confusion matrix), ONNX export, and offline inference.
+Phase B consumes Phase A output only (no window building). It adds training (TCN/GRU), evaluation (accuracy, macro-F1, confusion matrix, per-class CSV), ONNX export, and offline inference.
+
+## Phase C: Feature Pipeline and Run Config
+
+Phase C adds a **feature pipeline** (normalization, velocity, angles) and **run configuration**:
+
+- **Feature options** (train/eval/export): `raw` (baseline 51-D), `norm`, `vel`, `angles`, `combo`; `conf_mode`: `keep` (x,y,conf) or `drop` (x,y only); `norm_center` / `norm_scale` (e.g. `auto`, `midhip`, `shoulders`).
+- **Run config**: Each training run writes `config.json` in the run directory (data path, model, hyperparameters, `feature_config`). Eval can load config from the run dir so `--data` is optional when the run was trained with config.
+- **Checkpoints** store `input_features` and `feature_config`; export and inference use them so ONNX and offline inference apply the same transforms when needed.
+- **Compare runs**: CLI to aggregate all runs under a directory into a single `compare.csv` (run name, model, features, accuracy, macro_f1).
 
 **Dependencies**:
 
 - Base: `pip install -e .` (torch, scikit-learn, matplotlib, etc.).
 - ONNX export: `pip install -e ".[export]"` (installs `onnx`, `onnxscript`). Export uses **opset 18** to avoid version-conversion failures (requesting 14 caused downgrade errors with current PyTorch/ONNX).
 - Inference CLI: requires `onnxruntime`. On **Python 3.14** there may be no wheel — use `pip install onnxruntime` if available, or Python 3.11/3.12 with `pip install -e ".[export,export-inference]"`.
+
+After `pip install -e .`, these entry points are available: `har-windownet-build-dataset`, `har-windownet-validate-dataset`, `har-windownet-train`, `har-windownet-eval`, `har-windownet-export-model`, `har-windownet-compare-runs`. You can also run any CLI as `python -m har_windownet.cli.<module>` (e.g. `python -m har_windownet.cli.train`).
 
 ### Training steps (end-to-end)
 
@@ -250,31 +261,37 @@ Run these in order from the project root (with `.venv` activated):
 
 2. **Validate** (optional): `python -m har_windownet.cli.validate_dataset --data data_out/custom10`
 
-3. **Train**: saves `best.ckpt` and `last.ckpt` under `--out`. Use `--seed` for reproducible runs (e.g. multiple seeds for reporting).
+3. **Train**: saves `best.ckpt`, `last.ckpt`, and `config.json` under `--out`. Use `--seed` for reproducible runs. Optional: `--features norm|vel|angles|combo`, `--conf-mode keep|drop`, `--norm-center`, `--norm-scale` (see Train section below).
    ```bash
    python -m har_windownet.cli.train \
      --data data_out/custom10 --model tcn --batch-size 64 --epochs 30 --lr 1e-3 \
      --seed 42 --out runs/custom10_tcn_v1
    ```
 
-4. **Eval**: writes `reports/<split>_metrics.json`, `confusion_matrix.png`, and `class_map.csv`.
+4. **Eval**: writes `reports/<split>_metrics.json`, `per_class.csv`, `confusion_matrix.png`, and `class_map.csv`. If the checkpoint is in a run dir with `config.json`, `--data` can be omitted (data path is read from config).
    ```bash
    python -m har_windownet.cli.eval \
-     --data data_out/custom10 --checkpoint runs/custom10_tcn_v1/best.ckpt --split test
+     --checkpoint runs/custom10_tcn_v1/best.ckpt --split test
    ```
+   Or with explicit data: `--data data_out/custom10 --checkpoint runs/custom10_tcn_v1/best.ckpt`.
 
-5. **Export to ONNX** (optional): for deployment.
+5. **Export to ONNX** (optional): for deployment. Uses `input_features` and `feature_config` from the checkpoint; `model_meta.json` includes `feature_spec` when present.
    ```bash
    python -m har_windownet.cli.export_model \
      --checkpoint runs/custom10_tcn_v1/best.ckpt --out runs/custom10_tcn_v1/export \
      --data data_out/custom10
    ```
 
-6. **Inference** (optional): run the exported model on a single-window JSON.
+6. **Inference** (optional): run the exported model on a single-window JSON. If the model was trained with a feature pipeline, inference applies the same transforms using `feature_spec` from `model_meta.json`.
    ```bash
    python -m har_windownet.export.inference_onnx \
      --model runs/custom10_tcn_v1/export/model.onnx \
      --window data_out/custom10/samples/window_00000.json
+   ```
+
+7. **Compare runs** (optional): aggregate run configs and test metrics into one CSV.
+   ```bash
+   python -m har_windownet.cli.compare_runs --runs runs --out runs/compare.csv
    ```
 
 ### Train
@@ -284,16 +301,25 @@ python -m har_windownet.cli.train --data data_out/ntu120_windows --model tcn --b
 ```
 
 - `--data` **must** point to a Phase A dataset directory: it must contain `label_map.json` and `splits/train.parquet` (and val/test). If `label_map.json` is missing, you get a clear error: run `build_dataset` with `--out <dir>` first, then use that path as `--data`.
+- `--model`: `tcn` (default) or `gru`.
 - `--seed` (default 42): random seed for PyTorch and the train DataLoader shuffle, for reproducible training. Use different seeds (e.g. 42, 7, 123) when reporting mean±std across runs.
-- Saves `best.ckpt` (by validation macro-F1) and `last.ckpt` under `--out`.
+- **Phase C feature options** (optional):
+  - `--features`: `raw` (default, 51-D keypoints), `norm`, `vel`, `angles`, `combo`. `norm` = center/scale normalization; `vel` = add frame-wise velocity; `angles` = add joint angles; `combo` = norm + vel + angles.
+  - `--conf-mode`: `keep` (default, x,y,conf) or `drop` (x,y only).
+  - `--norm-center`, `--norm-scale`: e.g. `auto`, `midhip`, `shoulders`, `hips` (see `har_windownet.features.transforms`).
+- Saves `best.ckpt` (by validation macro-F1), `last.ckpt`, and **`config.json`** under `--out`. The config holds data path, model name, hyperparameters, and `feature_config` for reproducible eval/export.
 
 ### Eval
 
 ```bash
-python -m har_windownet.cli.eval --data data_out/ntu120_windows --checkpoint runs/exp01/best.ckpt --split test
+python -m har_windownet.cli.eval --checkpoint runs/exp01/best.ckpt --split test
 ```
 
-Writes `reports/test_metrics.json` (accuracy, macro-F1, per-class) and optionally `confusion_matrix.png`.
+Or with explicit data: `--data data_out/ntu120_windows --checkpoint runs/exp01/best.ckpt`.
+
+- **Data**: If the checkpoint lives in a run directory that contains **`config.json`** (from Phase C training), the eval CLI reads the data path from it and **`--data` is optional**. Otherwise you must pass `--data` to the Phase A output directory.
+- **Pipeline**: Eval uses the same feature pipeline as training when `feature_config` is present in the run config or in the checkpoint.
+- Writes under `reports/`: **`<split>_metrics.json`** (accuracy, macro-F1, per-class), **`per_class.csv`** (class_id, label, precision, recall, f1, support), **`confusion_matrix.png`**, and **`class_map.csv`**. Default reports dir is the checkpoint’s parent directory (`run_dir/reports`).
 
 ### Export to ONNX
 
@@ -301,8 +327,8 @@ Writes `reports/test_metrics.json` (accuracy, macro-F1, per-class) and optionall
 python -m har_windownet.cli.export_model --checkpoint runs/exp01/best.ckpt --out runs/exp01/export [--data data_out/ntu120_windows]
 ```
 
-- Produces `model.onnx`, `model_meta.json`, and `label_map.json` in `--out`. With the new PyTorch ONNX exporter you may see a warning about `dynamic_axes` vs `dynamic_shapes`; export still completes.
-- The exported model uses **ONNX opset 18**. Using 14 triggered a failed downgrade (axes adapter) in the ONNX version converter; we use 18 so no conversion is needed and `onnxruntime` can run the model.
+- Produces **`model.onnx`**, **`model_meta.json`**, and **`label_map.json`** in `--out`. The checkpoint’s **`input_features`** and **`feature_config`** (if present) are used so the ONNX input shape and metadata match the training pipeline. **`model_meta.json`** includes **`input_features`** and **`feature_spec`** (same as `feature_config`) when the model was trained with a feature pipeline.
+- Exported model uses **ONNX opset 18**. Using 14 triggered a failed downgrade in the ONNX converter; we use 18 so `onnxruntime` can run the model. You may see a PyTorch warning about `dynamic_axes`; export still completes.
 
 ### Offline inference on Window JSON
 
@@ -312,7 +338,28 @@ After exporting the model, run inference (requires `onnxruntime`):
 python -m har_windownet.export.inference_onnx --model runs/exp01/export/model.onnx --window data_out/ntu120_windows/samples/window_00000.json
 ```
 
-Pass a **single-window** JSON file (e.g. one of the files under `samples/`). Returns `pred_label`, `pred_label_id`, and optionally `probs`.
+- Pass a **single-window** JSON file (or a list of windows). Returns `pred_label`, `pred_label_id`, and optionally `probs`.
+- If **`model_meta.json`** contains **`feature_spec`**, the inference code applies the same feature transforms (normalize, velocity, angles, etc.) to the window keypoints before running the model, so raw Window JSON (30×17×3) works for both baseline and feature-pipeline models.
+
+### Compare runs
+
+Aggregate run directories (each with optional `config.json` and `reports/test_metrics.json`) into a single CSV:
+
+```bash
+python -m har_windownet.cli.compare_runs --runs runs --out runs/compare.csv
+```
+
+- **`--runs`** (default: `runs`): directory containing one subdirectory per run. Only subdirs that have **`best.ckpt`** or **`last.ckpt`** are included.
+- **`--out`**: output CSV path (default: `<runs>/compare.csv`).
+- CSV columns: **run**, **model**, **features**, **conf_mode**, **accuracy**, **macro_f1**. Metrics come from `reports/test_metrics.json` when present; config from `config.json`. Old runs without config/metrics still get a row with default model/features and empty accuracy/macro_f1.
+
+### Run directory layout (after train + eval)
+
+A typical run directory (e.g. `runs/exp01`) contains:
+
+- **`config.json`**: data path, model, batch_size, epochs, lr, seed, device, **feature_config** (written at train start).
+- **`best.ckpt`**, **`last.ckpt`**: PyTorch checkpoints (model_state_dict, epoch, val_macro_f1, num_classes, model_name, **input_features**, **feature_config**).
+- **`reports/`** (after eval): **`<split>_metrics.json`**, **`per_class.csv`**, **`confusion_matrix.png`**, **`class_map.csv`**.
 
 ---
 
@@ -325,6 +372,7 @@ Pass a **single-window** JSON file (e.g. one of the files under `samples/`). Ret
 | **ONNX export: version conversion error** | The project uses **opset 18**; do not lower it to 14 or the ONNX C API converter can fail. Re-export with the default (no change needed in code). |
 | **ModuleNotFoundError: onnxruntime** | Install with `pip install onnxruntime` if a wheel exists for your Python version. On Python 3.14 there may be none; use Python 3.11/3.12 for the inference CLI. |
 | **ModuleNotFoundError: onnxscript** | Required for `torch.onnx.export`. Install with `pip install -e ".[export]"`. |
+| **Eval: Missing --data** | If the run has no `config.json` (e.g. pre–Phase C run), you must pass `--data <path_to_phase_a_output>`. |
 
 ---
 
@@ -395,5 +443,20 @@ pytest --cov=har_windownet --cov-report=term-missing
   - `build_dataset`: raises when no NTU samples found under source.
 - **Custom10 adapter**
   - Label parsing from folder names (A001_*, A1_*, A43_*), clip discovery (.json, .npy, .skeleton), read_clip and skeleton path (NTU reader + body_to_coco17_normalized), windowing, build_dataset_custom10 with 80/10/10 split; window contract validation for JSON and .skeleton clips.
+- **Feature transforms** (`test_features_transforms.py`)
+  - `get_input_features`: raw/norm/vel/angles/combo with conf_mode keep/drop; default config.
+  - `build_feature_pipeline`: output shape (T, F) and dtype for raw, norm, vel, angles, combo.
+  - `NormalizePoseTransform`: output shape, conf_mode=drop, clamp.
+  - `VelocityTransform`: output shape, first-frame zeros.
+  - `AnglesTransform`: output shape (T, 10), values in [0, 1].
+- **Training metrics** (`test_training_metrics.py`)
+  - `accuracy`, `macro_f1`: perfect, partial, zero; labels/num_classes.
+  - `confusion_matrix`: shape, diagonal when predictions match.
+  - `per_class_precision_recall`: keys (precision, recall, f1, support), list lengths, support values.
+- **Training models** (`test_training_models.py`)
+  - `get_model`: returns TCN/GRU with correct num_classes and input_features; unknown model raises.
+  - TCN/GRU `forward`: output shape (B, num_classes) for default and custom F.
+- **Compare runs CLI** (`test_cli_compare_runs.py`)
+  - Writes CSV with config + metrics from run dirs; empty runs dir; skips subdirs without checkpoint.
 
 Additional test cases (edge shapes, boundary values, invalid UUIDs, etc.) are in the test modules.
