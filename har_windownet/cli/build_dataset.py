@@ -1,4 +1,4 @@
-"""CLI: build Phase A dataset from NTU RGB+D 120 or Custom10."""
+"""CLI: build Phase A dataset from NTU RGB+D 120, Custom10, or Edge17."""
 
 from __future__ import annotations
 
@@ -12,22 +12,23 @@ from har_windownet.datasets.ntu.config import (
     PROJECTION_3D,
 )
 from har_windownet.datasets.custom10.builder import build_dataset_custom10
+from har_windownet.datasets.edge17.builder import build_dataset_edge17
 
 
 def main() -> None:
     p = argparse.ArgumentParser(
-        description="Build Window dataset from NTU RGB+D 120 or Custom10 (Phase A)"
+        description="Build Window dataset from NTU RGB+D 120, Custom10, or Edge17 (Phase A)"
     )
     p.add_argument(
         "--dataset",
-        choices=["ntu", "custom10"],
+        choices=["ntu", "custom10", "edge17"],
         default="ntu",
-        help="Dataset adapter: ntu (default) or custom10",
+        help="Dataset adapter: ntu (default), custom10, or edge17",
     )
     p.add_argument(
         "--source",
         required=True,
-        help="Path to source folder (NTU: .skeleton/.npy; Custom10: label subfolders with .json/.npy/.skeleton)",
+        help="Path to source folder (NTU: .skeleton/.npy; Custom10: label subfolders with .json/.npy/.skeleton; Edge17: .skeleton.jsonl files)",
     )
     p.add_argument(
         "--out",
@@ -90,7 +91,16 @@ def main() -> None:
     )
     args = p.parse_args()
 
-    if args.dataset == "custom10":
+    if args.dataset == "edge17":
+        meta = build_dataset_edge17(
+            args.source,
+            args.out,
+            window_size=args.window_size,
+            stride=args.stride,
+            seed=args.seed,
+            export_samples_count=args.export_samples,
+        )
+    elif args.dataset == "custom10":
         meta = build_dataset_custom10(
             args.source,
             args.out,
