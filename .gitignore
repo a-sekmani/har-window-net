@@ -22,3 +22,11 @@ htmlcov/
 *.swp
 *.swo
 
+# Data files (too large for GitHub)
+data_out/
+datasets/
+runs/
+*.parquet
+*.ckpt
+*.onnx
+*.onnx.data
