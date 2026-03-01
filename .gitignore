@@ -28,5 +28,5 @@ datasets/
 runs/
 *.parquet
 *.ckpt
-*.onnx
-*.onnx.data
+
+# Note: exported_models/ is tracked (small enough for GitHub)
