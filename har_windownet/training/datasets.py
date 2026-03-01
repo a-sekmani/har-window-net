@@ -80,6 +80,15 @@ class WindowDataset(torch.utils.data.Dataset):
     def __len__(self) -> int:
         return self._length
 
+    def get_class_counts(self) -> list[int]:
+        """Return list of sample counts per class (ordered by class_id 0..num_classes-1)."""
+        labels = self.table.column("label").to_pylist()
+        counts = [0] * self.num_classes
+        for label_str in labels:
+            label_id = self.label_to_id[str(label_str)]
+            counts[label_id] += 1
+        return counts
+
     def _keypoints_to_tensor(self, keypoints: Any) -> torch.Tensor:
         """Convert keypoints (list or array) to (T, F) float32 (raw baseline)."""
         arr = np.array(keypoints, dtype=np.float32)

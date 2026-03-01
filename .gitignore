@@ -16,15 +16,9 @@ build/
 .coverage
 htmlcov/
 
-# Output data
-data_out/
-
 # IDE
 .idea/
 .vscode/
 *.swp
 *.swo
 
-# Data
-datasets/
-runs/

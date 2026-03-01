@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import torch
 import torch.nn as nn
+from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader
 
 from har_windownet.training.datasets import WindowDataset
@@ -76,6 +78,9 @@ def run_training(
     seed: int = 42,
     device: str | None = None,
     feature_config: dict | None = None,
+    use_class_weights: bool = False,
+    label_smoothing: float = 0.0,
+    use_lr_scheduler: bool = False,
 ) -> None:
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -110,7 +115,27 @@ def run_training(
         model_name, num_classes=num_classes, input_features=input_features
     ).to(dev)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    criterion = nn.CrossEntropyLoss()
+
+    # Class weights for imbalanced datasets
+    class_weights = None
+    if use_class_weights:
+        class_counts = train_ds.get_class_counts()
+        class_counts_arr = np.array(class_counts, dtype=np.float32)
+        class_counts_arr = np.maximum(class_counts_arr, 1.0)
+        weights = 1.0 / class_counts_arr
+        weights = weights / weights.sum() * num_classes
+        class_weights = torch.tensor(weights, dtype=torch.float32).to(dev)
+        print(f"Using class weights: {weights.tolist()}")
+
+    criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=label_smoothing)
+    if label_smoothing > 0:
+        print(f"Using label smoothing: {label_smoothing}")
+
+    # Learning rate scheduler
+    scheduler = None
+    if use_lr_scheduler:
+        scheduler = CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-6)
+        print("Using CosineAnnealingLR scheduler")
 
     best_f1 = -1.0
     for epoch in range(1, epochs + 1):
@@ -136,3 +161,7 @@ def run_training(
             best_f1 = val_f1
             torch.save(ckpt_payload, out_dir / "best.ckpt")
         torch.save(ckpt_payload, out_dir / "last.ckpt")
+
+        # Step the scheduler after each epoch
+        if scheduler is not None:
+            scheduler.step()

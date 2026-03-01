@@ -33,6 +33,22 @@ def main() -> None:
     )
     p.add_argument("--norm-center", default="auto", help="Normalize center (e.g. auto, midhip)")
     p.add_argument("--norm-scale", default="auto", help="Normalize scale (e.g. auto, fixed)")
+    p.add_argument(
+        "--class-weights",
+        action="store_true",
+        help="Use inverse class frequency weights for imbalanced datasets",
+    )
+    p.add_argument(
+        "--label-smoothing",
+        type=float,
+        default=0.0,
+        help="Label smoothing factor (0.0 = no smoothing, 0.1 = recommended)",
+    )
+    p.add_argument(
+        "--lr-scheduler",
+        action="store_true",
+        help="Use CosineAnnealingLR scheduler",
+    )
     args = p.parse_args()
 
     feature_config = {
@@ -55,6 +71,9 @@ def main() -> None:
         "seed": args.seed,
         "device": args.device,
         "feature_config": feature_config,
+        "class_weights": args.class_weights,
+        "label_smoothing": args.label_smoothing,
+        "lr_scheduler": args.lr_scheduler,
     }
     with open(config_path, "w", encoding="utf-8") as f:
         json.dump(run_config, f, indent=2)
@@ -69,6 +88,9 @@ def main() -> None:
         seed=args.seed,
         device=args.device,
         feature_config=feature_config,
+        use_class_weights=args.class_weights,
+        label_smoothing=args.label_smoothing,
+        use_lr_scheduler=args.lr_scheduler,
     )
 
 
