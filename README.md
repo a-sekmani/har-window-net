@@ -354,6 +354,10 @@ python -m har_windownet.cli.train --data data_out/ntu120_windows --model tcn --b
   - `--features`: `raw` (default, 51-D keypoints), `norm`, `vel`, `angles`, `combo`. `norm` = center/scale normalization; `vel` = add frame-wise velocity; `angles` = add joint angles; `combo` = norm + vel + angles.
   - `--conf-mode`: `keep` (default, x,y,conf) or `drop` (x,y only).
   - `--norm-center`, `--norm-scale`: e.g. `auto`, `midhip`, `shoulders`, `hips` (see `har_windownet.features.transforms`).
+- **Training optimizations** (optional):
+  - `--class-weights`: Use inverse class frequency weights for imbalanced datasets.
+  - `--label-smoothing <float>`: Label smoothing factor (0.0 = no smoothing, 0.1 = recommended).
+  - `--lr-scheduler`: Use CosineAnnealingLR scheduler for gradual learning rate decay.
 - Saves `best.ckpt` (by validation macro-F1), `last.ckpt`, and **`config.json`** under `--out`. The config holds data path, model name, hyperparameters, and `feature_config` for reproducible eval/export.
 
 ### Eval
@@ -511,3 +515,42 @@ pytest --cov=har_windownet --cov-report=term-missing
   - Writes CSV with config + metrics from run dirs; empty runs dir; skips subdirs without checkpoint.
 
 Additional test cases (edge shapes, boundary values, invalid UUIDs, etc.) are in the test modules.
+
+---
+
+## Training Report
+
+For detailed training experiments and results on the Edge17 dataset, see **[training_report.md](training_report.md)**.
+
+### Summary of Best Results (Edge17 Dataset)
+
+| Version | Model | Features | Accuracy | Macro-F1 | Notes |
+|---------|-------|----------|----------|----------|-------|
+| v1 | TCN | vel | 82.04% | 82.74% | Baseline |
+| **v6_lowlr** | TCN | vel | 83.99% | **84.90%** | Best F1 (recommended for deployment) |
+
+**Key findings:**
+- Training optimizations (class weights + label smoothing + LR scheduler) improve F1 by +2.16%
+- Velocity features are critical for HAR (removing them drops F1 by ~23%)
+- TCN outperforms GRU on this dataset
+
+### Exported Model for Cloud Deployment
+
+The best model is exported to `exported_models/edge17_v6_lowlr/`:
+- `model.onnx` + `model.onnx.data`: ONNX model
+- `model_meta.json`: Input shape, feature spec
+- `label_map.json`: Class ID to activity name mapping
+
+**Activity Classes:**
+| ID | Activity |
+|----|----------|
+| 0 | drink water |
+| 1 | eat meal |
+| 2 | stand up |
+| 3 | sit down |
+| 4 | reading |
+| 5 | falling down |
+| 6 | headache |
+| 7 | chest pain |
+| 8 | back pain |
+| 9 | nausea/vomiting |
