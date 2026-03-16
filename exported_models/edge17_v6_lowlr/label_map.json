@@ -14,8 +14,8 @@
   "id_to_name": {
     "0": "drink water",
     "1": "eat meal",
-    "2": "stand up",
-    "3": "sit down",
+    "2": "sitting down",
+    "3": "standing up",
     "4": "reading",
     "5": "falling down",
     "6": "headache",
@@ -26,8 +26,8 @@
   "label_names": {
     "A001": "drink water",
     "A002": "eat meal",
-    "A008": "stand up",
-    "A009": "sit down",
+    "A008": "sitting down",
+    "A009": "standing up",
     "A011": "reading",
     "A043": "falling down",
     "A044": "headache",

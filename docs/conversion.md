@@ -20,7 +20,7 @@ Do not use a fixed `1.0`. Use Kinect V2 **trackingState** per joint (from `.skel
 - **1 (Inferred)** → conf = 0.5  
 - **0 (NotTracked)** → conf = 0.0  
 
-`mean_pose_conf` is computed from these values. For `.npy` (no tracking state), default 1.0 is used. See `har_windownet/datasets/ntu/mapping.tracking_state_to_confidence`.
+`mean_pose_conf` is computed from these values. For `.npy` (no tracking state), default 1.0 is used. See `har_windownet.datasets.ntu.mapping` (function `tracking_state_to_confidence`).
 
 ## Timestamps (offline NTU)
 

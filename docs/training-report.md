@@ -19,21 +19,21 @@ For detailed training experiments and results on the Edge17 dataset, see **[trai
 
 The best model is exported to `exported_models/edge17_v6_lowlr/`:
 
-- `model.onnx` + `model.onnx.data`: ONNX model
+- `model.onnx`: ONNX model (single file)
 - `model_meta.json`: Input shape, feature spec
 - `label_map.json`: Class ID to activity name mapping
 
-**Activity classes:**
+**Activity classes** (class ID matches `label_to_id`: A001→0, A002→1, A008→2, A009→3, …):
 
-| ID | Activity |
-|----|----------|
-| 0 | drink water |
-| 1 | eat meal |
-| 2 | stand up |
-| 3 | sit down |
-| 4 | reading |
-| 5 | falling down |
-| 6 | headache |
-| 7 | chest pain |
-| 8 | back pain |
-| 9 | nausea/vomiting |
+| ID | Label | Activity |
+|----|-------|----------|
+| 0 | A001 | drink water |
+| 1 | A002 | eat meal |
+| 2 | A008 | sitting down |
+| 3 | A009 | standing up |
+| 4 | A011 | reading |
+| 5 | A043 | falling down |
+| 6 | A044 | headache |
+| 7 | A045 | chest pain |
+| 8 | A046 | back pain |
+| 9 | A048 | nausea/vomiting |

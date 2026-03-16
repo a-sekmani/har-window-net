@@ -87,7 +87,7 @@ Or with explicit data: `--data data_out/ntu120_windows --checkpoint runs/exp01/b
 
 - **Data**: You must pass **`--data`** to the Phase A output directory (e.g. `data_out/ntu120_windows`). The run’s `config.json` stores the data path used at train time for reference.
 - **Pipeline**: Eval uses the same feature pipeline as training when `feature_config` is present in the run config or checkpoint.
-- Writes under `reports/`: **`<split>_metrics.json`** (accuracy, macro-F1, per-class), **`per_class.csv`**, **`confusion_matrix.png`**, **`class_map.csv`**. Default reports dir is the checkpoint’s parent directory (`run_dir/reports`).
+- Writes under `reports/`: **`<split>_metrics.json`** (accuracy, macro-F1, per-class), **`per_class.csv`**, **`confusion_matrix.png`**, **`class_map.csv`**. Default reports dir is the checkpoint’s parent directory (`run_dir/reports`). For `--split test`, the metrics file is named `test_metrics.json`. Use `--out` to write to a different directory (e.g. `eval/`).
 
 ---
 
